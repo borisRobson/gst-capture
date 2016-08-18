@@ -1,8 +1,7 @@
 #include "stream.h"
 #include "detectobject.h"
 #include "recognition.h"
-#include <vector>
-#include <QTime>
+
 
 using namespace cv;
 using namespace std;
@@ -15,6 +14,8 @@ gboolean timefinished(gpointer data);
 detectobject *obj;
 recognition *rec;
 
+Ptr<FaceRecognizer> model;
+
 stream::stream()
 {
     obj = new detectobject();
@@ -25,7 +26,7 @@ GMainLoop *loop;
 GstElement *pipeline;
 GstElement *appsink;
 
-void stream::buildpipeline()
+bool stream::buildpipeline()
 {
     qDebug() << __FUNCTION__;
 
@@ -63,15 +64,71 @@ void stream::buildpipeline()
     gst_bin_add_many(GST_BIN(pipeline), src,conv, filter, appsink, NULL);
 
     //link
-    gst_element_link_many(src,conv,filter,appsink,NULL);
+    if(!gst_element_link_many(src,conv,filter,appsink,NULL))
+        return false;
 
-    //set to playing
-    gst_element_set_state(pipeline, GST_STATE_PLAYING);
 
     //assign bus callback
     bus = GST_ELEMENT_BUS(pipeline);
     gst_bus_add_watch(bus, bus_cb, loop);
     gst_object_unref(bus);
+
+    return true;
+}
+
+bool stream::trainrecogniser(string name)
+{
+    qDebug() << __FUNCTION__;
+
+    //set path to image
+#ifdef IMX6
+    const string filename = "/nvdata/tftpboot/" + name +".png";
+#else
+    const string filename =  name + ".png";
+#endif
+
+    cout << "filename: " << filename << endl;
+
+    //read in data base image
+    Mat comp = imread(filename,1);
+
+    //if image read failed return false
+    if(comp.empty())
+        return false;
+
+    Mat grey(Size(200,200),CV_8UC1);
+    //detect channels and apply appropriate conversion
+    if(grey.channels() == 3){
+        cvtColor(comp,grey,CV_BGR2GRAY);
+    }else if(grey.channels() == 4){
+        cvtColor(comp,grey, CV_BGRA2GRAY);
+    }else{
+        grey = comp;
+    }
+
+    qDebug() << "comp loaded";
+
+    vector<Mat>faces;
+    vector<int>faceLabels;
+    faces.push_back(grey);
+    faceLabels.push_back(0);
+
+    model = rec->learnCollectedFaces(faces,faceLabels);
+
+    //confirm face rec was set
+    string modelName = model->name();
+    if(modelName == "")
+        return false;
+
+    return true;
+}
+
+
+
+void stream::startstream()
+{
+    //set to playing
+    gst_element_set_state(pipeline, GST_STATE_PLAYING);
 
     //set program timeout function
     g_timeout_add(5000,timefinished,NULL);
@@ -131,6 +188,7 @@ GstFlowReturn new_preroll(GstAppSink* asink, gpointer data)
 }
 
 static int framecount;
+static int matches;
 
 GstFlowReturn new_buffer(GstAppSink* asink, gpointer data)
 {
@@ -147,8 +205,7 @@ GstFlowReturn new_buffer(GstAppSink* asink, gpointer data)
     QTime t;
     t.start();
 
-    Q_UNUSED(data);
-    char filename[16];
+    Q_UNUSED(data);    
 
     //grab available buffer from appsink
     GstBuffer *buf = gst_app_sink_pull_buffer(asink);
@@ -170,22 +227,18 @@ GstFlowReturn new_buffer(GstAppSink* asink, gpointer data)
     Mat face = obj->findFace(frame);
     int detect = t.elapsed() - begindetect;
     cout << "detect time: " << detect << endl;
-
+    t.restart();
     //if face detected
     if(!face.empty()){
-        //set image write params
-        vector<int> compression_params;
-        compression_params.push_back(CV_IMWRITE_PNG_COMPRESSION);
-        compression_params.push_back(9);
-
-    #ifdef IMX6
-        sprintf(filename, "/nvdata/tftpboot/brandon%d.png", framecount);
-    #else
-        sprintf(filename, "./brandon%d.png", framecount);
-    #endif
-        imwrite(filename, face, compression_params);
-        qDebug() << "image captured";
-
+        Mat reconstructed = rec->reconstructFace(model, face);
+        double similarity = rec->getSimilarity(face,reconstructed);
+        if (similarity < 0.6f){
+            cout << "match, similarity: " << similarity << endl;
+            matches++;
+        }else{
+            qDebug() << "no match";
+        }
+        cout << "recognise time: " << t.elapsed() << endl;
     }
     t.restart();
 
@@ -198,6 +251,8 @@ gboolean timefinished(gpointer data)
 {
     Q_UNUSED(data);
     qDebug() << __FUNCTION__;
+    cout << "matches : " << matches << endl;
+    cout << "framecount: " << framecount << endl;
     g_main_loop_quit(loop);
     return false;
 }

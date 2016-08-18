@@ -27,7 +27,7 @@ detectobject::detectobject()
 
 Mat detectobject::findFace(Mat &image)
 {
-    QTime t;
+
     //convert image to greyscale
     Mat grey(Size(640,480),CV_8UC1);
     //detect channels and apply appropriate conversion
@@ -38,7 +38,7 @@ Mat detectobject::findFace(Mat &image)
     }else{
         grey = image;
     }
-    t.start();
+
 
     //equalise hist - smooths differences in lighting
     equalizeHist(grey,grey);
@@ -46,11 +46,8 @@ Mat detectobject::findFace(Mat &image)
     //find larget object in image : face
     vector<Rect> objects;
     Rect faceRect;
-    t.restart();
 
     detectlargestobject(grey, faceCascade, objects);
-
-    cout << "find face time: " << t.elapsed() << endl;
 
     if(objects.size() > 0){
         //set largest object

@@ -2,14 +2,19 @@
 #define STREAM_H
 
 #include <QObject>
-#include <QTimer>
 #include <QDebug>
+#include <QTime>
+#include <QTimer>
+#include <vector>
+#include <string>
 
 #include "gst/gst.h"
 #include "gst/app/gstappsink.h"
 #include "glib-2.0/glib.h"
 #include "opencv2/opencv.hpp"
+#include "opencv2/highgui/highgui.hpp"
 
+using namespace std;
 
 
 class stream : public QObject
@@ -17,9 +22,11 @@ class stream : public QObject
     Q_OBJECT
 public:
     stream();
-    void buildpipeline();
-
+    bool buildpipeline();
+    bool trainrecogniser(string name);
+    void startstream();
 };
+
 
 class Task: public QObject{
     Q_OBJECT
