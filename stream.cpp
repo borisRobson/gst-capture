@@ -10,9 +10,23 @@ gboolean bus_cb(GstBus *bus, GstMessage *msg, gpointer user_data);
 GstFlowReturn new_preroll(GstAppSink* asink, gpointer data);
 GstFlowReturn new_buffer(GstAppSink* asink, gpointer data);
 gboolean timefinished(gpointer data);
+void writeimage(Mat image);
+
+const char *facerecAlgorithm = "FaceRecognizer.Eigenfaces";
 
 detectobject *obj;
 recognition *rec;
+
+#ifdef IMX6
+    const double SIMILARITY_THRESH = 0.29f;
+    const int MATCH_THRESHOLD = 3;
+#else
+    const double SIMILARITY_THRESH = 0.11f;
+    const int MATCH_THRESHOLD = 30;
+#endif
+
+static int framecount;
+static int matches;
 
 Ptr<FaceRecognizer> model;
 
@@ -80,40 +94,49 @@ bool stream::trainrecogniser(string name)
 {
     qDebug() << __FUNCTION__;
 
-    //set path to image
-#ifdef IMX6
-    const string filename = "/nvdata/tftpboot/" + name +".png";
-#else
-    const string filename =  name + ".png";
-#endif
-
-    cout << "filename: " << filename << endl;
-
-    //read in data base image
-    Mat comp = imread(filename,1);
-
-    //if image read failed return false
-    if(comp.empty())
-        return false;
-
-    Mat grey(Size(200,200),CV_8UC1);
-    //detect channels and apply appropriate conversion
-    if(grey.channels() == 3){
-        cvtColor(comp,grey,CV_BGR2GRAY);
-    }else if(grey.channels() == 4){
-        cvtColor(comp,grey, CV_BGRA2GRAY);
-    }else{
-        grey = comp;
-    }
-
-    qDebug() << "comp loaded";
-
     vector<Mat>faces;
-    vector<int>faceLabels;
-    faces.push_back(grey);
-    faceLabels.push_back(0);
+    vector<int>labels;
+    for(int i = 0; i <=2; i++){
+    #ifdef IMX6
+        string username = "/nvdata/tftpboot/" +name + format("%d.png",i);
+#else
+        string username = name + format("%d.png",i);
+#endif
+        cout << "filename: "<< username << endl;
 
-    model = rec->learnCollectedFaces(faces,faceLabels);
+        Mat user = imread(username,1);
+        if(user.empty()){
+            qDebug() << "image read failed";
+            return false;
+        }
+        Mat grey;
+
+        //detect channels and apply appropriate conversion
+        if(user.channels() == 3){
+            qDebug() << "3";
+            cvtColor(user,grey,CV_BGR2GRAY);
+        }else if(user.channels() == 4){
+            qDebug() << "4";
+            cvtColor(user,grey, CV_BGRA2GRAY);
+        }else{
+            qDebug() << "1";
+            grey = user;
+        }
+
+        Rect ROI;
+        ROI.x = 20;
+        ROI.width = grey.cols - 40;
+        ROI.y = 0;
+        ROI.height = grey.rows;
+
+        Mat final = grey(ROI);
+
+        resize(final,final,Size(160,160));
+
+        faces.push_back(final);
+        labels.push_back(0);
+    }
+    model = rec->learnCollectedFaces(faces,labels,facerecAlgorithm);
 
     //confirm face rec was set
     string modelName = model->name();
@@ -122,8 +145,6 @@ bool stream::trainrecogniser(string name)
 
     return true;
 }
-
-
 
 void stream::startstream()
 {
@@ -140,6 +161,12 @@ void stream::startstream()
     gst_element_set_state(pipeline, GST_STATE_NULL);
 
     gst_object_unref(pipeline);
+
+    if(matches > MATCH_THRESHOLD){
+        cout << "Matched: " << matches << " times, User Accepted" << endl;
+    }else{
+        cout << "insufficient matches" << endl;
+    }
 
     QCoreApplication::instance()->quit();
 
@@ -183,15 +210,16 @@ GstFlowReturn new_preroll(GstAppSink* asink, gpointer data)
     //confirms successful initialisation
     Q_UNUSED(asink);
     Q_UNUSED(data);
+
     g_print("Got preroll\n");
     return GST_FLOW_OK;
 }
 
-static int framecount;
-static int matches;
 
 GstFlowReturn new_buffer(GstAppSink* asink, gpointer data)
 {
+    vector<Mat> matchfaces;
+    vector<int>labels;
     framecount++;
     //discard initial frames as camera takes a few frames to apply all setting properly
     if(framecount <= 10){
@@ -227,18 +255,33 @@ GstFlowReturn new_buffer(GstAppSink* asink, gpointer data)
     Mat face = obj->findFace(frame);
     int detect = t.elapsed() - begindetect;
     cout << "detect time: " << detect << endl;
+
     t.restart();
     //if face detected
     if(!face.empty()){
-        Mat reconstructed = rec->reconstructFace(model, face);
-        double similarity = rec->getSimilarity(face,reconstructed);
-        if (similarity < 0.6f){
-            cout << "match, similarity: " << similarity << endl;
-            matches++;
+        Mat reconstructed = rec->reconstructFace(model, face);        
+        double similarity = rec->getSimilarity(reconstructed,face);
+#ifdef IMX6
+        writeimage(face);
+#endif
+        //writeimage(reconstructed);
+        if (similarity < SIMILARITY_THRESH){
+            int id = model->predict(face);
+            cout << "id: " << id << endl;
+            if(id == 0){
+                cout << "match, similarity: " << similarity << endl;
+                matches++;
+                matchfaces.push_back(face);
+                labels.push_back(id);
+                model->train(matchfaces,labels);
+            }else{
+                qDebug() << "unexpected user";
+                cout << "similarity: " << similarity << endl;
+            }
         }else{
+            cout << "similarity: " << similarity << endl;
             qDebug() << "no match";
-        }
-        cout << "recognise time: " << t.elapsed() << endl;
+        }        
     }
     t.restart();
 
@@ -247,12 +290,26 @@ GstFlowReturn new_buffer(GstAppSink* asink, gpointer data)
     return GST_FLOW_OK;
 }
 
+
+ int grey;
+
+void writeimage(Mat image)
+{
+    char filename[16];
+   grey++;
+    vector<int>compression_params;
+    compression_params.push_back(CV_IMWRITE_PNG_COMPRESSION);
+    compression_params.push_back(9);    
+    sprintf(filename, "/nvdata/tftpboot/grey%d.png",grey);
+    string file = string(filename);
+    imwrite(file, image, compression_params);
+}
+
 gboolean timefinished(gpointer data)
 {
     Q_UNUSED(data);
     qDebug() << __FUNCTION__;
-    cout << "matches : " << matches << endl;
-    cout << "framecount: " << framecount << endl;
+
     g_main_loop_quit(loop);
     return false;
 }

@@ -60,7 +60,7 @@ Mat detectobject::findFace(Mat &image)
 
     if (faceRect.width > 0){
         //return face
-        Mat face = image(faceRect);
+        Mat face = grey(faceRect);
         int detectWidth = 200;
         resize(face,face,Size(detectWidth,detectWidth));
         Mat warped = warpImage(face);
@@ -80,18 +80,27 @@ Mat detectobject::warpImage(Mat &face)
     const int faceHeight = faceWidth;
 
     //perform the transform
-    Mat warped = Mat(faceHeight, faceWidth, CV_8U, Scalar(128));    
+    Mat warped = Mat(faceHeight, faceWidth, CV_8UC1);
     face.copyTo(warped);
 
     //apply mask around edges
-    Mat mask = Mat(warped.size(), CV_8U, Scalar(0));
+    Mat mask = Mat(warped.size(), CV_8UC1, Scalar(0));
     Point faceCentre = Point(faceWidth/2, cvRound(faceHeight*0.40));
     Size size = Size(cvRound(faceWidth * 0.4), cvRound(faceHeight * 0.7));
-    ellipse(mask, faceCentre, size, 0, 0, 360, Scalar(255), CV_FILLED);;
-    Mat dstImg = Mat(warped.size(), CV_8U, Scalar(128));
+
+    ellipse(mask, faceCentre, size, 0, 0, 360, Scalar(255), CV_FILLED);
+    Mat dstImg = Mat(warped.size(), CV_8U, Scalar(0));
     warped.copyTo(dstImg,mask);
 
-    return dstImg;
+    Rect ROI;
+    ROI.x = 20;
+    ROI.width = dstImg.cols - 40;
+    ROI.y = 0;
+    ROI.height = dstImg.rows;
+
+    Mat final = dstImg(ROI);
+    resize(final,final,Size(160,160));
+    return final;
 }
 
 void detectobject::detectlargestobject(Mat &image, CascadeClassifier &cascade, vector<Rect> &objects)

@@ -15,7 +15,7 @@
 #include "opencv2/highgui/highgui.hpp"
 
 using namespace std;
-
+using namespace cv;
 
 class stream : public QObject
 {
@@ -25,6 +25,7 @@ public:
     bool buildpipeline();
     bool trainrecogniser(string name);
     void startstream();
+
 };
 
 

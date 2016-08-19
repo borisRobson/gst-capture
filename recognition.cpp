@@ -58,6 +58,7 @@ Mat recognition::reconstructFace(const Ptr<FaceRecognizer> model, const Mat prep
 
         //project input into PCA subspace
         Mat projection = subspaceProject(eigenvectors, averageFaceRow, preprocessedFace.reshape(1,1));
+
         //imshow("projection", averageFaceRow);
 
         //generate reconstructed face back form pca
@@ -76,6 +77,7 @@ Mat recognition::reconstructFace(const Ptr<FaceRecognizer> model, const Mat prep
         return Mat();
     }
 }
+
 
 /*
     compare 2 images by getting the L2 error; (sqrt of sum of squared error)

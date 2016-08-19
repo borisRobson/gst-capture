@@ -1,7 +1,7 @@
 /****************************************************************************
 ** Meta object code from reading C++ file 'stream.h'
 **
-** Created: Thu Aug 18 15:22:52 2016
+** Created: Fri Aug 19 15:35:56 2016
 **      by: The Qt Meta Object Compiler version 62 (Qt 4.7.2)
 **
 ** WARNING! All changes made in this file will be lost!
