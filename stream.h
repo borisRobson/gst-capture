@@ -5,6 +5,7 @@
 #include <QDebug>
 #include <QTime>
 #include <QTimer>
+#include <QFile>
 #include <vector>
 #include <string>
 

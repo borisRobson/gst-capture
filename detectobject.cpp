@@ -39,7 +39,6 @@ Mat detectobject::findFace(Mat &image)
         grey = image;
     }
 
-
     //equalise hist - smooths differences in lighting
     equalizeHist(grey,grey);
 
@@ -83,21 +82,24 @@ Mat detectobject::warpImage(Mat &face)
     Mat warped = Mat(faceHeight, faceWidth, CV_8UC1);
     face.copyTo(warped);
 
-    //apply mask around edges
+    //find centre of face
     Mat mask = Mat(warped.size(), CV_8UC1, Scalar(0));
     Point faceCentre = Point(faceWidth/2, cvRound(faceHeight*0.40));
     Size size = Size(cvRound(faceWidth * 0.4), cvRound(faceHeight * 0.7));
 
+    //apply mask around the edges
     ellipse(mask, faceCentre, size, 0, 0, 360, Scalar(255), CV_FILLED);
     Mat dstImg = Mat(warped.size(), CV_8U, Scalar(0));
     warped.copyTo(dstImg,mask);
 
+    //crop unnecessary black edges
     Rect ROI;
     ROI.x = 20;
     ROI.width = dstImg.cols - 40;
     ROI.y = 0;
     ROI.height = dstImg.rows;
 
+    //make square
     Mat final = dstImg(ROI);
     resize(final,final,Size(160,160));
     return final;
@@ -108,8 +110,9 @@ void detectobject::detectlargestobject(Mat &image, CascadeClassifier &cascade, v
     bool scaled = false;
     //set flags for single object detection
     int flags = CASCADE_FIND_BIGGEST_OBJECT;
-    //vector<Rect> objects;
-    /*set detection parameters:
+
+    /*
+        set detection parameters:
         -min size
         -search detail
         -false detection threshold
@@ -121,6 +124,7 @@ void detectobject::detectlargestobject(Mat &image, CascadeClassifier &cascade, v
     Mat dst;
     image.copyTo(dst);
 
+    //resize large image for faster processing time
     if(dst.cols > 500){
         resize(dst, dst, Size(), 0.5, 0.5);
         scaled = true;
@@ -129,6 +133,7 @@ void detectobject::detectlargestobject(Mat &image, CascadeClassifier &cascade, v
     //opencv obj detect function
     cascade.detectMultiScale(dst,objects,searchScaleFactor,minNeighbours, flags, minFeatureSize);
 
+    //resize if scaled
     if(scaled){
         for(uint i = 0; i < objects.size(); i++){
             objects[i].x = cvRound(objects[i].x * 2);

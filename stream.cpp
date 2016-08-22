@@ -17,16 +17,19 @@ const char *facerecAlgorithm = "FaceRecognizer.Eigenfaces";
 detectobject *obj;
 recognition *rec;
 
+//set detection and match thresholds
 #ifdef IMX6
-    const double SIMILARITY_THRESH = 0.29f;
+    const double SIMILARITY_THRESH = 0.2f;
     const int MATCH_THRESHOLD = 3;
+    const int CONSECUTIVE_THRESHOLD = 2;
 #else
-    const double SIMILARITY_THRESH = 0.11f;
+    const double SIMILARITY_THRESH = 0.22f;
     const int MATCH_THRESHOLD = 30;
 #endif
 
 static int framecount;
 static int matches;
+static int consecutive;
 
 Ptr<FaceRecognizer> model;
 
@@ -81,7 +84,6 @@ bool stream::buildpipeline()
     if(!gst_element_link_many(src,conv,filter,appsink,NULL))
         return false;
 
-
     //assign bus callback
     bus = GST_ELEMENT_BUS(pipeline);
     gst_bus_add_watch(bus, bus_cb, loop);
@@ -94,35 +96,35 @@ bool stream::trainrecogniser(string name)
 {
     qDebug() << __FUNCTION__;
 
+
     vector<Mat>faces;
     vector<int>labels;
+    //3 images per user
     for(int i = 0; i <=2; i++){
     #ifdef IMX6
         string username = "/nvdata/tftpboot/" +name + format("%d.png",i);
 #else
         string username = name + format("%d.png",i);
 #endif
-        cout << "filename: "<< username << endl;
-
+        cout << username << endl;
         Mat user = imread(username,1);
         if(user.empty()){
             qDebug() << "image read failed";
             return false;
         }
+
         Mat grey;
 
         //detect channels and apply appropriate conversion
         if(user.channels() == 3){
-            qDebug() << "3";
             cvtColor(user,grey,CV_BGR2GRAY);
         }else if(user.channels() == 4){
-            qDebug() << "4";
             cvtColor(user,grey, CV_BGRA2GRAY);
         }else{
-            qDebug() << "1";
             grey = user;
         }
 
+        //crop edges of mask
         Rect ROI;
         ROI.x = 20;
         ROI.width = grey.cols - 40;
@@ -131,16 +133,19 @@ bool stream::trainrecogniser(string name)
 
         Mat final = grey(ROI);
 
+        //facerecogniser needs square images
         resize(final,final,Size(160,160));
 
+        //add each face to array
         faces.push_back(final);
         labels.push_back(0);
     }
+    ///train the recogniser on the database images
     model = rec->learnCollectedFaces(faces,labels,facerecAlgorithm);
 
     //confirm face rec was set
     string modelName = model->name();
-    if(modelName == "")
+    if(modelName != facerecAlgorithm)
         return false;
 
     return true;
@@ -148,6 +153,8 @@ bool stream::trainrecogniser(string name)
 
 void stream::startstream()
 {
+    qDebug() << __FUNCTION__;
+
     //set to playing
     gst_element_set_state(pipeline, GST_STATE_PLAYING);
 
@@ -162,10 +169,8 @@ void stream::startstream()
 
     gst_object_unref(pipeline);
 
-    if(matches > MATCH_THRESHOLD){
-        cout << "Matched: " << matches << " times, User Accepted" << endl;
-    }else{
-        cout << "insufficient matches" << endl;
+    if(matches < MATCH_THRESHOLD && consecutive < CONSECUTIVE_THRESHOLD){
+        qDebug() << "***Access Denied***";
     }
 
     QCoreApplication::instance()->quit();
@@ -221,8 +226,9 @@ GstFlowReturn new_buffer(GstAppSink* asink, gpointer data)
     vector<Mat> matchfaces;
     vector<int>labels;
     framecount++;
+
     //discard initial frames as camera takes a few frames to apply all setting properly
-    if(framecount <= 10){
+    if(framecount <= 5){
         return GST_FLOW_OK;
     }
 
@@ -259,18 +265,23 @@ GstFlowReturn new_buffer(GstAppSink* asink, gpointer data)
     t.restart();
     //if face detected
     if(!face.empty()){
+        //run captured image through trained recogniser
         Mat reconstructed = rec->reconstructFace(model, face);        
+        //compare captured image with average image from database
         double similarity = rec->getSimilarity(reconstructed,face);
+
+//for debugging on board
 #ifdef IMX6
-        writeimage(face);
+        //writeimage(face);
 #endif
-        //writeimage(reconstructed);
         if (similarity < SIMILARITY_THRESH){
             int id = model->predict(face);
-            cout << "id: " << id << endl;
+            //if face is a match
             if(id == 0){
                 cout << "match, similarity: " << similarity << endl;
                 matches++;
+                consecutive++;
+                //retrain the recogniser with match - improves subsequent matches
                 matchfaces.push_back(face);
                 labels.push_back(id);
                 model->train(matchfaces,labels);
@@ -279,11 +290,19 @@ GstFlowReturn new_buffer(GstAppSink* asink, gpointer data)
                 cout << "similarity: " << similarity << endl;
             }
         }else{
-            cout << "similarity: " << similarity << endl;
-            qDebug() << "no match";
+            cout << "no user detected, similarity: " << similarity << endl;
+            consecutive = 0;
         }        
+    }else{
+        qDebug() << "No face found";
+        consecutive = 0;
     }
     t.restart();
+
+    if(matches >= MATCH_THRESHOLD || consecutive >= CONSECUTIVE_THRESHOLD){
+        qDebug() << "***Access Granted***";
+        timefinished(NULL);
+    }
 
     //face detection finished - emit signals will notify when next buffer is available
     gst_app_sink_set_emit_signals((GstAppSink*)asink, true);
@@ -291,16 +310,16 @@ GstFlowReturn new_buffer(GstAppSink* asink, gpointer data)
 }
 
 
- int grey;
-
+int cap;
 void writeimage(Mat image)
 {
+    //write captured image to file
     char filename[16];
-   grey++;
+    cap++;
     vector<int>compression_params;
     compression_params.push_back(CV_IMWRITE_PNG_COMPRESSION);
     compression_params.push_back(9);    
-    sprintf(filename, "/nvdata/tftpboot/grey%d.png",grey);
+    sprintf(filename, "/nvdata/tftpboot/cap%d.png",cap);
     string file = string(filename);
     imwrite(file, image, compression_params);
 }
@@ -308,8 +327,7 @@ void writeimage(Mat image)
 gboolean timefinished(gpointer data)
 {
     Q_UNUSED(data);
-    qDebug() << __FUNCTION__;
-
+    //exit loop
     g_main_loop_quit(loop);
     return false;
 }
